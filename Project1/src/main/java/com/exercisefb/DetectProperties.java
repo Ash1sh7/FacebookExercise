@@ -1,6 +1,12 @@
 package com.exercisefb;
 
+import com.google.api.client.util.IOUtils;
 import com.google.api.services.discovery.model.JsonSchema.Variant.Map;
+import com.google.appengine.api.datastore.DatastoreService;
+import com.google.appengine.api.datastore.DatastoreServiceFactory;
+import com.google.appengine.api.datastore.PreparedQuery;
+import com.google.appengine.api.datastore.Query;
+import com.google.apphosting.api.DatastorePb.GetResponse.Entity;
 import com.google.cloud.vision.v1.AnnotateImageRequest;
 import com.google.cloud.vision.v1.AnnotateImageResponse;
 import com.google.cloud.vision.v1.BatchAnnotateImagesResponse;
@@ -12,12 +18,21 @@ import com.google.cloud.vision.v1.ImageAnnotatorClient;
 import com.google.protobuf.ByteString;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
 public class DetectProperties {
-  public static void detectProperties() throws IOException {
+  private static final String FbPhotoId = null;
+
+public static void detectProperties() throws IOException {
     // TODO(developer): Replace these variables before running the sample.
     //String filePath = "FbExample\\AD6I2485.JPG";
     //detectProperties(filePath);
@@ -47,16 +62,20 @@ public class DetectProperties {
           System.out.format("Error: %s%n", res.getError().getMessage());
           return;
         }
+        
+        DatastoreService datastore = DatastoreServiceFactory.getDatastoreService();
+        if (checkIfImageExists1(datastore, FbPhotoId) == false) {  
+          //TODO: change fun name 
+          Object url;
+      DominantColorsAnnotation colors = getImageLabels(url)
+          Map<String, Float> map1 = new HashMap<>();
 
         // For full list of available annotations, see http://g.co/cloud/vision/docs
-        DominantColorsAnnotation colors = res.getImagePropertiesAnnotation().getDominantColors();
+        DominantColorsAnnotation colors1 = res.getImagePropertiesAnnotation().getDominantColors();
         float red=0,green=0,blue=0;
         for (ColorInfo color : colors.getColorsList()) {
-			/*
-			 * System.out.format( "fraction: %f%nr: %f, g: %f, b: %f%n",
-			 * color.getPixelFraction(), color.getColor().getRed(),
-			 * color.getColor().getGreen(), color.getColor().getBlue());
-			 */
+    
+       
           red += color.getColor().getRed() * color.getPixelFraction();
           green += color.getColor().getGreen() * color.getPixelFraction();
           blue += color.getColor().getBlue() * color.getPixelFraction();
@@ -67,5 +86,89 @@ public class DetectProperties {
         map.put("blue", blue);
       }
     }
+  }
+}
+  public static void addImageDetailsToDataStore(String url, Map<String,Float> colors, String imageId, DatastoreService
+          datastore) {  
+      Entity User_Images = new Entity(Uploaded_Photos);
+      (Uploaded_Photos).setProperty("image_id", imageId);
+      (Uploaded_Photos).setProperty("image_url", url);
+      StringBuffer result = new StringBuffer();
+      String red = "Red: "+colors.get("red");
+      String green = "Green: "+colors.get("green");
+      String blue = "blue: "+colors.get("blue");
+      result.append(red+" "+green+" "+blue);
+      (Uploaded_photos).setProperty("labels", result.toString()); //converting labels result to a string
+      datastore.put(Uploaded_Photos);
+  }
+
+  private void getImageFromStore(HttpServletRequest request, HttpServletResponse response, DatastoreService datastore, String imageId, String dominantColor) {
+
+      Query query =
+              new Query("Uploaded_Photos") //checking if images exist in datastore
+                      .setFilter(new Query.FilterPredicate("image_id", Query.FilterOperator.EQUAL, imageId));
+      PreparedQuery q = datastore.prepare(query);
+      List<Entity> results = q.asList(FetchOptions.Builder.withDefaults());
+      if(null != results) { //if image exists get url, labels and set them to imageUrl, imageLabels
+          results.forEach(user_Photo -> {
+              String labelsFromStore = (String) user_Photo.getProperty("labels");
+              String image_url=((System) user_Photo).getProperty("image_url").toString();
+              request.setAttribute("imageUrl",image_url );
+              request.setAttribute("imageLabels", labelsFromStore);
+              request.setAttribute("dominantColor", dominantColor);
+              RequestDispatcher dispatcher = getServletContext() //sending client request to jsp file
+                      .getRequestDispatcher("/upload.jsp");
+              try {
+                  dispatcher.forward(request, response);
+              } catch (ServletException e) {
+                  e.printStackTrace();
+              } catch (IOException e) {
+                  e.printStackTrace();
+              }
+          });
+      }
+  private DominantColorsAnnotation getImageLabels(String imageUrl) {
+        try {
+            byte[] imgBytes = downloadFile(new URL(imageUrl));
+            ByteString byteString = ByteString.copyFrom(imgBytes);
+            Image image = Image.newBuilder().setContent(byteString).build();
+            
+            
+            
+            Feature feature = Feature.newBuilder().setType(Feature.Type.IMAGE_PROPERTIES).build(); //label detection feature for the image is done here
+            AnnotateImageRequest request =
+                    AnnotateImageRequest.newBuilder().addFeatures(feature).setImage(image).build();
+            List<AnnotateImageRequest> requests = new ArrayList<>();
+            requests.add(request); //labels that has been detected is added to the new list we hv created
+            
+            ImageAnnotatorClient client = ImageAnnotatorClient.create(); //The ImageAnnotator service returns detected entities from the images
+            BatchAnnotateImagesResponse batchResponse = client.batchAnnotateImages(requests);
+            client.close();
+            List<AnnotateImageResponse> imageResponses = batchResponse.getResponsesList();
+            AnnotateImageResponse imageResponse = imageResponses.get(0);
+            if (imageResponse.hasError()) {
+                System.err.println("Error getting image labels: " + imageResponse.getError().getMessage());
+                return null;
+            }
+            return imageResponse.getImagePropertiesAnnotation().getDominantColors();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+}
+  }
+
+  public static boolean checkIfImageExists(DatastoreService datastore, String imageId) {
+      Query q =
+              new Query("User_Images") //checking if image exists in datastore
+                      .setFilter(new Query.FilterPredicate("image_id", Query.FilterOperator.EQUAL, imageId));
+      PreparedQuery pq = datastore.prepare(q);
+      com.google.appengine.api.datastore.Entity result = pq.asSingleEntity();
+      if (result == null) {
+          return false;//image doen't exists
+      }
+      return true;//image exists
   }
 }
