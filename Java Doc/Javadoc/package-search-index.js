@@ -1,1 +1,0 @@
-packageSearchIndex = [{"l":"All Packages","url":"allpackages-index.html"},{"l":"com.csu.rest"},{"l":"com.csu.rest.analytics"},{"l":"com.csu.rest.model"},{"l":"com.websystem.csueb"}]
